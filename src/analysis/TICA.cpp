@@ -84,7 +84,8 @@ class TICA : public vesselbase::ActionWithAveraging {
 private:
 	// If we are reusing data are we ignoring the reweighting in that data
 	bool ignore_reweight;
-	bool is_rescaled;
+	bool is_corr_info;
+	bool is_rescale;
 	bool is_read_corr;
 	bool is_debug;
 	bool is_old_calc;
@@ -109,11 +110,13 @@ private:
 	std::string eigvec_file;
 	std::string corr_file;
 	std::string corr_input;
+	std::string corr_info_file;
 	std::string rescale_file;
 	std::string debug_file;
 	
 	OFile oeigval;
 	OFile ocorr;
+	OFile ocorrinfo;
 	OFile orescale;
 	OFile odebug;
 	
@@ -190,6 +193,7 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.addFlag("USE_OLD_ALGORITHEM",false,"use float value to calculate the time");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
 	keys.add("optional","STEP_SIZE","the simulation time step size");
+	keys.add("optional","CORR_INFO_FILE","the file that output the information of CVs correlation");
 	keys.add("optional","RESCALE_FILE","the file that output rescaled trajectory");
 	keys.add("optional","DEBUG_FILE","the file that debug information");
 }
@@ -197,7 +201,7 @@ void TICA::registerKeywords( Keywords& keys ){
 TICA::TICA(const ActionOptions&ao):
 Action(ao),
 ActionWithAveraging(ao),
-ignore_reweight(false),is_rescaled(false),is_read_corr(false),
+ignore_reweight(false),is_corr_info(false),is_rescale(false),is_read_corr(false),
 is_debug(false),is_int_time(false),use_int_calc(false),
 idata(0),narg(0),npoints(0),tot_steps(0),delta_tau(0),wnorm(0),dt(1.0),
 current_args(getNumberOfArguments()),
@@ -255,15 +259,25 @@ data(getNumberOfArguments())
 	if((ignore_reweight&&is_int_time)||is_old_calc)
 		use_int_calc=true;
 
+	parse("CORR_INFO_FILE",corr_info_file);
+	if(corr_info_file.size()>0)
+	{
+		is_corr_info=true;
+		ocorrinfo.link(*this);
+		ocorrinfo.open(rescale_file.c_str());
+		ocorrinfo.fmtField(" %f");
+		ocorrinfo.addConstantField("Lagged_Time");	
+	}
+	
 	parse("RESCALE_FILE",rescale_file);
 	if(rescale_file.size()>0)
 	{
-		is_rescaled=true;
+		is_rescale=true;
 		orescale.link(*this);
 		orescale.open(rescale_file.c_str());
 		orescale.fmtField(" %f");
-		orescale.addConstantField("Lagged_Time");	
 	}
+	
 	parse("DEBUG_FILE",debug_file);
 	if(debug_file.size()>0)
 	{
@@ -351,7 +365,7 @@ data(getNumberOfArguments())
 		log.printf("  use old algorithm to calculate\n");
 	log.printf("  with eigen values output file: %s\n",eigval_file.c_str());
 	log.printf("  with eigen vector output file: %s\n",eigvec_file.c_str());
-	if(is_rescaled)
+	if(is_rescale)
 		log.printf("  with rescaled output file: %s\n",rescale_file.c_str());
 	if(is_debug)
 		log.printf("  with debug file: %s\n",debug_file.c_str());
@@ -370,7 +384,9 @@ TICA::~TICA()
 	//~ for(unsigned i=0;i!=oeigvecs.size();++i)
 		//~ oeigvecs[i].close();
 	oeigval.close();
-	if(is_rescaled)
+	if(is_corr_info)
+		ocorrinfo.close();
+	if(is_rescale)
 		orescale.close();
 	if(is_debug)
 		odebug.close();
@@ -412,6 +428,21 @@ void TICA::performAnalysis()
 		std::partial_sum(weights2.begin(),weights2.end(),neff.begin());
 		rw_time=neff.back();
 		neff.pop_back();
+		
+		if(is_rescale)
+		{
+			for(unsigned i=0;i!=tot_steps;++i)
+			{
+				orescale.printField("INDEX",int(i));
+				orescale.printField("RESCALED_TIME",neff[i]);
+				for(unsigned j=0;j!=narg;++j)
+					orescale.printField(argument_names[j],data[j][i]);
+				orescale.printField("WEIGHT",weights[i]);
+				orescale.printField();
+			}
+			orescale.flush();
+		}
+		
 		if(is_old_calc)
 		{
 			rw_time=neff.back();
@@ -708,7 +739,7 @@ void TICA::performAnalysis()
 		oeigvec.fmtField(" %f");
 		for(unsigned j=0;j!=npoints;++j)
 		{
-			unsigned tau=j*delta_tau;
+			double tau=j*delta_tau;
 			double time=tau*dt;
 			oeigvec.printField("TIME",time);
 			for(unsigned k=0;k!=narg;++k)
@@ -914,18 +945,18 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 			}
 		}
 	}
-	if(is_rescaled)
+	if(is_corr_info)
 	{	
-		orescale.printField("Lagged_Time",_tau);		
+		ocorrinfo.printField("Lagged_Time",_tau);		
 		for(unsigned i=0;i!=twt.size();++i)
 		{
-			orescale.printField("Index",int(i));
-			orescale.printField("XID",int(xid[i]));
-			orescale.printField("YID",int(yid[i]));
-			orescale.printField("Weight",twt[i]);
-			orescale.printField();
+			ocorrinfo.printField("Index",int(i));
+			ocorrinfo.printField("XID",int(xid[i]));
+			ocorrinfo.printField("YID",int(yid[i]));
+			ocorrinfo.printField("Weight",twt[i]);
+			ocorrinfo.printField();
 		}
-		orescale.flush();
+		ocorrinfo.flush();
 	}
 	
 	Matrix<double> corrmat(narg,narg);
