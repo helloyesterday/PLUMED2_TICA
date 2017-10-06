@@ -109,6 +109,7 @@ private:
 	std::string eigval_file;
 	std::string eigvec_file;
 	std::string corr_file;
+	std::string corr_file2;
 	std::string corr_input;
 	std::string corr_info_file;
 	std::string rescale_file;
@@ -116,6 +117,7 @@ private:
 	
 	OFile oeigval;
 	OFile ocorr;
+	OFile ocorr2;
 	OFile ocorrinfo;
 	OFile orescale;
 	OFile odebug;
@@ -189,6 +191,7 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.add("compulsory","EIGENVECTOR_FILE","eigenvector","the file to output the result");
 	keys.add("compulsory","EIGENVALUE_FILE","eigenvalue.data","the file to output the eigen value");
 	keys.add("compulsory","CORRELATION_FILE","correlation.data","the file to output the correlation matrix");
+	keys.add("compulsory","CORR_CAN_FILE","correlation2.data","the file to output the correlation canonical matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
 	keys.addFlag("USE_OLD_ALGORITHEM",false,"use float value to calculate the time");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
@@ -246,6 +249,7 @@ data(getNumberOfArguments())
 	if(ncomp>narg)
 		error("the EIGEN_NUMBER cannot be larger than the number of CVs");
 	parse("CORRELATION_FILE",corr_file);
+	parse("CORR_CAN_FILE",corr_file2);
 	parse("EIGENVECTOR_FILE",eigvec_file);
 	parse("EIGENVALUE_FILE",eigval_file);
 	parse("STEP_SIZE",dt);
@@ -348,6 +352,16 @@ data(getNumberOfArguments())
 	ocorr.addConstantField("LAGGED_TIME");
 	ocorr.addConstantField("NORMALIZATION");
 	
+	ocorr2.link(*this);
+	ocorr2.open(corr_file2.c_str());
+	ocorr2.fmtField(" %e");
+	ocorr2.addConstantField("DIMENSION");
+	ocorr2.printField("DIMENSION",int(narg));
+	ocorr2.addConstantField("NPOINTS");
+	ocorr2.printField("NPOINTS",int(npoints));
+	ocorr2.addConstantField("LAGGED_TIME");
+	ocorr2.addConstantField("NORMALIZATION");
+	
 	oeigval.link(*this);
 	oeigval.open(eigval_file.c_str());
 
@@ -381,6 +395,7 @@ data(getNumberOfArguments())
 TICA::~TICA()
 {
 	ocorr.close();
+	ocorr2.close();
 	//~ for(unsigned i=0;i!=oeigvecs.size();++i)
 		//~ oeigvecs[i].close();
 	oeigval.close();
@@ -569,9 +584,15 @@ void TICA::performAnalysis()
 		}
 		
 		if(use_int_calc)
+		{
 			ocorr.printField("LAGGED_TIME",int(tau));
+			ocorr2.printField("LAGGED_TIME",int(tau));
+		}
 		else
+		{
 			ocorr.printField("LAGGED_TIME",tau);
+			ocorr2.printField("LAGGED_TIME",tau);
+		}
 		for(unsigned i=0;i!=narg;++i)
 		{
 			ocorr.printField("NORMALIZATION",xnorm);
@@ -622,6 +643,16 @@ void TICA::performAnalysis()
 		std::vector<double> nwt;
 		Matrix<double> nvt;
 		diagMat(C_can,nwt,nvt);
+		
+		for(unsigned i=0;i!=narg;++i)
+		{
+			ocorr2.printField("NORMALIZATION",xnorm);
+			ocorr2.printField("MATRIX",row_args[i]);
+			for(unsigned j=0;j!=narg;++j)
+				ocorr2.printField(col_args[j],C_can[i][j]);
+			ocorr2.printField();
+		}
+		ocorr2.flush();
 		
 		std::vector<double> eigval2;
 		std::vector<std::vector<double> > eigvec2;
