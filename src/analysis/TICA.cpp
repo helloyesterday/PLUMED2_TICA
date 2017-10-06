@@ -105,7 +105,7 @@ private:
 	double wnorm;
 	double dt;
 	double rw_time;
-	
+
 	std::string eigval_file;
 	std::string eigvec_file;
 	std::string corr_file;
@@ -265,7 +265,7 @@ data(getNumberOfArguments())
 		is_corr_info=true;
 		ocorrinfo.link(*this);
 		ocorrinfo.open(rescale_file.c_str());
-		ocorrinfo.fmtField(" %f");
+		ocorrinfo.fmtField(" %e");
 		ocorrinfo.addConstantField("Lagged_Time");	
 	}
 	
@@ -275,7 +275,7 @@ data(getNumberOfArguments())
 		is_rescale=true;
 		orescale.link(*this);
 		orescale.open(rescale_file.c_str());
-		orescale.fmtField(" %f");
+		orescale.fmtField(" %e");
 	}
 	
 	parse("DEBUG_FILE",debug_file);
@@ -284,7 +284,7 @@ data(getNumberOfArguments())
 		is_debug=true;
 		odebug.link(*this);
 		odebug.open(debug_file.c_str());
-		odebug.fmtField(" %f");
+		odebug.fmtField(" %e");
 		odebug.addConstantField("Lagged_Time");
 	}
 	parse("READ_CORR_FILE",corr_input);
@@ -340,7 +340,7 @@ data(getNumberOfArguments())
 	
 	ocorr.link(*this);
 	ocorr.open(corr_file.c_str());
-	ocorr.fmtField(" %f");
+	ocorr.fmtField(" %e");
 	ocorr.addConstantField("DIMENSION");
 	ocorr.printField("DIMENSION",int(narg));
 	ocorr.addConstantField("NPOINTS");
@@ -736,7 +736,7 @@ void TICA::performAnalysis()
 		oeigvec.open(name.c_str());
 		oeigvec.addConstantField("COMPONENT");
 		oeigvec.printField("COMPONENT",int(i));
-		oeigvec.fmtField(" %f");
+		oeigvec.fmtField(" %e");
 		for(unsigned j=0;j!=npoints;++j)
 		{
 			double tau=j*delta_tau;
