@@ -549,7 +549,8 @@ void TICA::performAnalysis()
 	
 	std::vector<std::vector<std::vector<double> > > eigvec_points;
 	log.printf("Running TICA ...\n");
-	std::vector<unsigned> compid(ncomp,0);
+	//~ std::vector<unsigned> compid(ncomp,0);
+	std::vector<std::vector<double> > pre_evec(ncomp);
 	for(unsigned ip=0;ip!=npoints;++ip)
 	{
 		double tau=ip*delta_tau;
@@ -732,24 +733,27 @@ void TICA::performAnalysis()
 			}
 			mnorm=sqrt(mnorm);
 			
-			if(ip==1)
+			double vmax=0;
+			unsigned cpid=0;
+			for(unsigned j=0;j!=narg;++j)
 			{
-				double vmax=0;
-				for(unsigned j=0;j!=narg;++j)
+				if(fabs(mvt[j][k]>vmax))
 				{
-					if(fabs(mvt[j][k]>vmax))
-					{
-						vmax=fabs(mvt[j][k]);
-						compid[k]=j;
-					}
+					vmax=fabs(mvt[j][k]);
+					//~ compid[k]=j;
+					cpid=j;
 				}
 			}
-			if(ip>0&&evec[compid[k]]<0)
+			
+			if(ip>0&&evec[cpid]*pre_evec[k][cpid]<0)
 				mnorm*=-1;
 			
 			for(unsigned i=0;i!=narg;++i)
 				evec[i]/=mnorm;
+			
 			tica_res.push_back(evec);
+			
+			pre_evec[k]=evec;
 		}
 		eigvec_points.push_back(tica_res);
 
