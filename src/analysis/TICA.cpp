@@ -20,7 +20,6 @@
    along with plumed.  If not, see <http://www.gnu.org/licenses/>.
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
 #include <numeric>
-#include <cfloat>
 #include "vesselbase/ActionWithAveraging.h"
 #include "core/ActionRegister.h"
 #include "AverageVessel.h"
@@ -47,8 +46,9 @@ rw: REWEIGHT_METAD TEMP=330
 
 TICA ...
  ARG=cv1,cv2
- DELTA_TAU=20
- POINTS_NUMBER=100
+ LAGGED_TIME=400
+ TAU_NUMBER=100
+ STEP_SIZE=0.2
  LOGWEIGHTS=rw
 ... TICA
 \endverbatim
@@ -67,8 +67,9 @@ rw: REWEIGHT_METAD TEMP=330
 
 TICA ...
  ARG=cv1,cv2
- DELTA_TAU=20
- POINTS_NUMBER=100
+ LAGGED_TIME=400
+ TAU_NUMBER=100
+ STEP_SIZE=0.2
  LOGWEIGHTS=rw
  READ_CORR_FILE=correlation.data
 ... TICA
@@ -88,7 +89,6 @@ private:
 	bool is_rescale;
 	bool is_read_corr;
 	bool is_debug;
-	bool is_old_calc;
 	bool is_int_time;
 	bool use_int_calc;
 
@@ -97,10 +97,13 @@ private:
 	unsigned narg;
 	unsigned npoints;
 	unsigned tot_steps;
-	unsigned rwsize;
+	//~ unsigned rwsize;
 	unsigned eff_size;
 	unsigned ncomp;
+	//~ unsigned nsize;
+	unsigned dsize;
 	
+	double lagged_time;
 	double delta_tau;
 	double wnorm;
 	double dt;
@@ -153,8 +156,7 @@ private:
 	
 	Matrix<double> Czero;
 	double get_correlation_integer(const std::vector<double>& X,
-		const std::vector<double>& Y,const std::vector<bool>& ynan,
-		unsigned _tau,double unorm);
+		const std::vector<double>& Y,unsigned _tau,double unorm);
 	double get_correlation_float(const std::vector<double>& X,
 		const std::vector<double>& Y,const std::vector<unsigned>& xid,
 		const std::vector<unsigned>& yid,const std::vector<double>& twt,
@@ -185,17 +187,16 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.remove("SERIAL"); keys.remove("LOWMEM"); 
 	keys.remove("ARG");
 	keys.add("compulsory","ARG","the CVs for the input to calculate TICA"); 
-  	keys.add("compulsory","DELTA_TAU","the delta lagged time to calculate TICA");
-	keys.add("compulsory","POINTS_NUMBER","how much point to output");
+  	keys.add("compulsory","LAGGED_TIME","the total lagged time to calculate TICA");
+	keys.add("compulsory","TAU_NUMBER","100","how much points of lagged time to output");
+	keys.add("compulsory","STEP_SIZE","1.0","the simulation time step size");
 	keys.add("compulsory","EIGEN_NUMBERS","1","how many eigenvectors to be output (from large to small)");
 	keys.add("compulsory","EIGENVECTOR_FILE","eigenvector","the file to output the result");
 	keys.add("compulsory","EIGENVALUE_FILE","eigenvalue.data","the file to output the eigen value");
 	keys.add("compulsory","CORRELATION_FILE","correlation.data","the file to output the correlation matrix");
 	keys.add("compulsory","CORR_CAN_FILE","correlation2.data","the file to output the correlation canonical matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
-	keys.addFlag("USE_OLD_ALGORITHEM",false,"use float value to calculate the time");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
-	keys.add("optional","STEP_SIZE","the simulation time step size");
 	keys.add("optional","CORR_INFO_FILE","the file that output the information of CVs correlation");
 	keys.add("optional","RESCALE_FILE","the file that output rescaled trajectory");
 	keys.add("optional","DEBUG_FILE","the file that debug information");
@@ -206,7 +207,7 @@ Action(ao),
 ActionWithAveraging(ao),
 ignore_reweight(false),is_corr_info(false),is_rescale(false),is_read_corr(false),
 is_debug(false),is_int_time(false),use_int_calc(false),
-idata(0),narg(0),npoints(0),tot_steps(0),delta_tau(0),wnorm(0),dt(1.0),
+idata(0),narg(0),npoints(0),tot_steps(0),dsize(0),delta_tau(0.0),wnorm(0.0),
 current_args(getNumberOfArguments()),
 myaverages(getNumberOfArguments()),
 argument_names(getNumberOfArguments()),
@@ -233,18 +234,29 @@ data(getNumberOfArguments())
 		row_args.push_back(rowid);
 	}
 	
-	parse("DELTA_TAU",delta_tau);
-	if(delta_tau<=0)
-		error("DELTA_TAU could larger than 0");
-	if(fabs(delta_tau-int(delta_tau))<DBL_EPSILON)
-		is_int_time=true;
-	
-	parse("POINTS_NUMBER",npoints);
+	//~ parse("DELTA_TAU",delta_tau);
+	parse("LAGGED_TIME",lagged_time);
+	if(lagged_time<=0)
+		error("LAGGED_TIME could be larger than 0");
+	parse("TAU_NUMBER",npoints);
 	if(npoints==0)
-		error("POINTS_NUMBER could not be 0");
+		error("TAU_NUMBER could not be 0");
+	delta_tau=lagged_time/npoints;
 	++npoints;
 	point_weights.assign(npoints,0);
+	
+	parse("STEP_SIZE",dt);
+	if(dt<=0)
+		error("STEP_SIZE could be larger than 0");
 		
+	double tsize=delta_tau/dt;
+	dsize=floor(tsize+0.5);
+	if(fabs(tsize-dsize)<1e-6)
+	{
+		is_int_time=true;
+		//~ nsize=floor(lagged_time/dt+0.5);
+	}
+
 	parse("EIGEN_NUMBERS",ncomp);
 	if(ncomp>narg)
 		error("the EIGEN_NUMBER cannot be larger than the number of CVs");
@@ -252,15 +264,10 @@ data(getNumberOfArguments())
 	parse("CORR_CAN_FILE",corr_file2);
 	parse("EIGENVECTOR_FILE",eigvec_file);
 	parse("EIGENVALUE_FILE",eigval_file);
-	parse("STEP_SIZE",dt);
 	
 	parseFlag("UNIFORM_WEIGHTS",ignore_reweight);
-	parseFlag("USE_OLD_ALGORITHEM",is_old_calc);
-	
-	if(is_old_calc&&!is_int_time)
-		error("old algorithm only support integer lagged time!");
-		
-	if((ignore_reweight&&is_int_time)||is_old_calc)
+
+	if(ignore_reweight&&is_int_time)
 		use_int_calc=true;
 
 	parse("CORR_INFO_FILE",corr_info_file);
@@ -311,14 +318,14 @@ data(getNumberOfArguments())
 			
 		for(unsigned ip=0;ip!=npoints;++ip)
 		{
-			int tt=0;
-			icorr.scanField("LAGGED_TIME",tt);
+			double lag_time=0;
+			icorr.scanField("LAGGED_TIME",lag_time);
 			double rnorm=0;
 			if(icorr.FieldExist("NORMALIZATION"))
 				icorr.scanField("NORMALIZATION",rnorm);
 			point_weights[ip]=rnorm;
-			plumed_massert(unsigned(tt)==ip*delta_tau,"the lagged time read from the correlation file mismatch!");
-			atau.push_back(unsigned(tt));
+			plumed_massert(fabs(ip*delta_tau-lag_time)<1.0e-6,"the lagged time read from the correlation file mismatch!");
+			atau.push_back(unsigned(lag_time));
 			Matrix<double> cc(narg,narg);
 			for(unsigned i=0;i!=narg;++i)
 			{
@@ -368,15 +375,14 @@ data(getNumberOfArguments())
 	checkRead();
 	
 	log.printf("  with %d arguments.\n",narg);
+	log.printf("  with toal lagged time: %f.\n",lagged_time);
 	log.printf("  with delta lagged time: %f.\n",delta_tau);
+	log.printf("  with number of time points: %d.\n",npoints);
 	log.printf("  with time step size: %f.\n",dt);
-	log.printf("  with number of points: %d.\n",npoints);
 	if(ignore_reweight)
 		log.printf("  use uniform weights to calculate\n");
 	if(use_int_calc)
-		log.printf("  use integal algorithm to calculate\n");
-	if(is_old_calc)
-		log.printf("  use old algorithm to calculate\n");
+		log.printf("  use integal algorithm to calculate all correlation\n");
 	log.printf("  with eigen values output file: %s\n",eigval_file.c_str());
 	log.printf("  with eigen vector output file: %s\n",eigvec_file.c_str());
 	if(is_rescale)
@@ -411,7 +417,7 @@ void TICA::performAnalysis()
 {
 	tot_steps=logweights.size();
 	if(ignore_reweight)
-		wnorm=tot_steps;
+		rw_time=tot_steps*dt;
 		
 	avgdata.resize(narg,std::vector<double>(tot_steps));
 	for(unsigned i=0;i!=narg;++i)
@@ -424,18 +430,8 @@ void TICA::performAnalysis()
 	log.printf("  with reading steps: %d.\n",idata);
 	log.printf("  with total steps: %d.\n",tot_steps);
 
-	unsigned nsize=0;
-	unsigned rwsize=0;
-	if(ignore_reweight&&is_int_time)
-	{
-		rw_time=tot_steps;
-		Rnew=avgdata;
-		Wnew=weights;
-		nandata.assign(tot_steps,false);
-		nsize=tot_steps;
-		rwsize=tot_steps;
-	}
-	else
+
+	if(!use_int_calc)
 	{
 		std::vector<double> weights2(weights);
 		weights2.insert(weights2.begin(),0);
@@ -457,32 +453,11 @@ void TICA::performAnalysis()
 			}
 			orescale.flush();
 		}
-		
-		if(is_old_calc)
-		{
-			rw_time=neff.back();
-			nsize=static_cast<unsigned>(neff.size());
-			rwsize=floor(rw_time+0.5)+1;
-			log.printf("  with size of the rescaled array: %d.\n",nsize);
-
-			Rnew.assign(narg,std::vector<double>(rwsize));
-			Wnew.assign(rwsize,0);
-			nandata.assign(rwsize,true);
-			for(unsigned i=0;i!=nsize;++i)
-			{
-				unsigned s=int(neff[i]);
-				effid.push_back(s);
-				for(unsigned j=0;j!=narg;++j)
-					Rnew[j][s]=avgdata[j][i];
-				Wnew[s]=weights[i];
-				nandata[s]=false;
-			}
-		}
 	}
 	log.printf("  with reweight time steps: %f.\n",rw_time);
 
 	double xnorm=0;
-	if(use_int_calc)
+	if(ignore_reweight)
 		Czero=build_correlation_integer(xnorm,0);
 	else
 		Czero=build_correlation_float(xnorm,0);
@@ -554,22 +529,24 @@ void TICA::performAnalysis()
 	for(unsigned ip=0;ip!=npoints;++ip)
 	{
 		double tau=ip*delta_tau;
-		double time=tau*dt;
-		log.printf("  Setp %f:\n",time);
 		
-		if(use_int_calc)
+		plumed_massert(tau<rw_time,"the lagged time is too large!");
+		
+		double ntau=tau/dt;
+		unsigned int_tau=floor(ntau+0.5);
+		bool is_use_int_calc=false;
+		if(use_int_calc||(ignore_reweight&&fabs(int_tau-ntau)<1e-6))
 		{
-			plumed_massert(unsigned(tau)<rwsize,"the lagged time is too large!");
+			is_use_int_calc=true;
+			log.printf("  Setp: %d\tLagged Time: %f (%f * %d)\n",ip,tau,dt,int_tau);
 		}
 		else
-		{
-			plumed_massert(tau<rw_time,"the lagged time is too large!");
-		}
-		
+			log.printf("  Setp: %d\tLagged Time: %f\n",ip,tau);
+
 		xnorm=0;
 		Matrix<double> Clag;
-		if(use_int_calc)
-			Clag=build_correlation_integer(xnorm,unsigned(tau));
+		if(is_use_int_calc)
+			Clag=build_correlation_integer(xnorm,int_tau);
 		else
 			Clag=build_correlation_float(xnorm,tau);
 		if(is_read_corr)
@@ -584,16 +561,9 @@ void TICA::performAnalysis()
 			xnorm+=point_weights[ip];
 		}
 		
-		if(use_int_calc)
-		{
-			ocorr.printField("LAGGED_TIME",int(tau));
-			ocorr2.printField("LAGGED_TIME",int(tau));
-		}
-		else
-		{
-			ocorr.printField("LAGGED_TIME",tau);
-			ocorr2.printField("LAGGED_TIME",tau);
-		}
+		ocorr.printField("LAGGED_TIME",tau);
+		ocorr2.printField("LAGGED_TIME",tau);
+
 		for(unsigned i=0;i!=narg;++i)
 		{
 			ocorr.printField("NORMALIZATION",xnorm);
@@ -630,7 +600,7 @@ void TICA::performAnalysis()
 		
 		if(is_debug)
 		{
-			odebug.printField("Lagged_Time",tau);
+			odebug.printField("LAGGED_TIME",tau);
 			for(unsigned i=0;i!=narg;++i)
 			{
 				odebug.printField("ROW",int(i));
@@ -693,7 +663,7 @@ void TICA::performAnalysis()
 		log.printf("\n\n");
 
 		oeigval.fmtField(" %f");
-		oeigval.printField("Time",time);
+		oeigval.printField("LAGGED_TIME",tau);
 		for(unsigned i=0;i!=narg;++i)
 		{
 			std::string id;
@@ -740,7 +710,6 @@ void TICA::performAnalysis()
 				if(fabs(mvt[j][k]>vmax))
 				{
 					vmax=fabs(mvt[j][k]);
-					//~ compid[k]=j;
 					cpid=j;
 				}
 			}
@@ -775,8 +744,7 @@ void TICA::performAnalysis()
 		for(unsigned j=0;j!=npoints;++j)
 		{
 			double tau=j*delta_tau;
-			double time=tau*dt;
-			oeigvec.printField("TIME",time);
+			oeigvec.printField("LAGGED_TIME",tau);
 			for(unsigned k=0;k!=narg;++k)
 			{
 				std::string id;
@@ -793,31 +761,33 @@ void TICA::performAnalysis()
 
 void TICA::accumulate(){
 	// Get the arguments ready to transfer to reference configuration
+	double cdw=cweight*dt;
+	double ldw=lweight+std::log(dt);
 	for(unsigned i=0;i<getNumberOfArguments();++i)
 	{
 		current_args[i]=getArgument(i);
 		data[i].push_back(current_args[i]);
 		if(ignore_reweight)
-			myaverages[i]+=current_args[i];
+			myaverages[i]+=current_args[i]*dt;
 		else
-			myaverages[i]+=current_args[i]*cweight;
+			myaverages[i]+=current_args[i]*cdw;
 	}
 
 	// Get the arguments and store them in a vector of vectors
 	
-	logweights.push_back(lweight);
+	logweights.push_back(ldw);
 	
 	if(ignore_reweight)
 	{
-		weights.push_back(1);
-		++wnorm;
+		weights.push_back(dt);
+		wnorm+=dt;
 	}
 	else
 	{
-		weights.push_back(cweight);
-		wnorm+=cweight;
+		weights.push_back(cdw);
+		wnorm+=cdw;
 	}
-	
+
 	// Increment data counter
 	++idata;
 }
@@ -836,37 +806,22 @@ void TICA::runFinalJobs() {
 
 Matrix<double> TICA::build_correlation_integer(double& unorm,unsigned _tau)
 {
-	std::vector<std::vector<double> > Y(Rnew);
-	std::vector<bool> ynan;
+	if(!ignore_reweight)
+		error("The integer algorithm can be only used with the flag IGNORE_REWEIGHT");
+	const std::vector<std::vector<double> >& X=avgdata;
+	std::vector<std::vector<double> > Y(avgdata);
 	if(_tau!=0)
 	{
 		for(unsigned i=0;i!=narg;++i)
 			Y[i].erase(Y[i].begin(),Y[i].begin()+_tau);
-		ynan=nandata;
-		ynan.erase(ynan.begin(),ynan.begin()+_tau);
 	}
-	unorm=0;
-	if(ignore_reweight)
-		unorm=Y.size();
-	else
-	{
-		for(unsigned i=0;i!=Y.size();++i)
-			unorm+=weights[i];
-	}
-	
+	unorm=Y[0].size()*dt;
+
 	Matrix<double> corrmat(narg,narg);
 	for(unsigned i=0;i!=narg;++i)
 	{
-		if(_tau==0)
-		{
-			for(unsigned j=0;j!=narg;++j)
-				corrmat[i][j]=get_correlation_integer(Rnew[i],Y[j],nandata,_tau,unorm);
-		}
-		else
-		{
-			for(unsigned j=0;j!=narg;++j)
-				corrmat[i][j]=get_correlation_integer(Rnew[i],Y[j],ynan,_tau,unorm);
-		}
+		for(unsigned j=0;j!=narg;++j)
+			corrmat[i][j]=get_correlation_integer(X[i],Y[j],_tau,unorm);
 	}
 	return corrmat;
 }
@@ -887,29 +842,29 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 		}
 		twt=weights;
 	}
-	else if(ignore_reweight)
-	{
-		unsigned ibeg=0;
-		unsigned iend=int(_tau);
-		double dend=_tau-iend;
-		double dbeg=1.0-dend;
-		
-		for(unsigned i=0;i!=tot_steps;++i)
-		{
-			xid.push_back(ibeg);
-			yid.push_back(iend++);
-			twt.push_back(dend);
-			fnorm+=dend;
-
-			if(iend==tot_steps)
-				break;
-
-			xid.push_back(ibeg++);
-			yid.push_back(iend);
-			twt.push_back(dbeg);
-			fnorm+=dbeg;
-		}
-	}
+	//~ else if(ignore_reweight)
+	//~ {
+		//~ unsigned ibeg=0;
+		//~ unsigned iend=int(_tau);
+		//~ double dend=(_tau-iend)*dt;
+		//~ double dbeg=(1.0-dend)*dt;
+		//~ 
+		//~ for(unsigned i=0;i!=tot_steps;++i)
+		//~ {
+			//~ xid.push_back(ibeg);
+			//~ yid.push_back(iend++);
+			//~ twt.push_back(dend);
+			//~ fnorm+=dend;
+//~ 
+			//~ if(iend==tot_steps)
+				//~ break;
+//~ 
+			//~ xid.push_back(ibeg++);
+			//~ yid.push_back(iend);
+			//~ twt.push_back(dbeg);
+			//~ fnorm+=dbeg;
+		//~ }
+	//~ }
 	else
 	{
 		// the beginnig time;
@@ -1003,39 +958,16 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 	return corrmat;
 }
 
-double TICA::get_correlation_integer(const std::vector<double>& X,const std::vector<double>& Y,const std::vector<bool>& ynan,unsigned _tau,double unorm)
+double TICA::get_correlation_integer(const std::vector<double>& X,const std::vector<double>& Y,unsigned _tau,double unorm)
 {
 	double corrmean=0;
-	if(ignore_reweight)
+	
+	for(unsigned id=0;id!=Y.size();++id)
 	{
-		for(unsigned id=0;id!=Y.size();++id)
-		{
-			double value=X[id]*Y[id];
-			corrmean+=value;
-		}
+		double value=X[id]*Y[id];
+		corrmean+=value*dt;
 	}
-	else if(_tau==0)
-	{
-		for(unsigned i=0;i!=effid.size();++i)
-		{
-			std::vector<double>::size_type id=effid[i];
-			double value=X[id]*Y[id];
-			corrmean+=value*Wnew[id];
-		}
-	}
-	else
-	{
-		for(unsigned i=0;i!=effid.size();++i)
-		{
-			std::vector<double>::size_type id=effid[i];
-			if(id>=Y.size())
-				break;
-			if(ynan[id])
-				continue;
-			double value=X[id]*Y[id];
-			corrmean+=value*Wnew[id];
-		}
-	}
+	
 	corrmean/=unorm;
 
 	return corrmean;
