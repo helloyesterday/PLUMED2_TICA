@@ -103,11 +103,16 @@ private:
 	//~ unsigned nsize;
 	unsigned dsize;
 	
+	double kB;
 	double lagged_time;
 	double delta_tau;
 	double wnorm;
 	double dt;
 	double rw_time;
+	double rw_temp;
+	double bshift;
+	double shift_value;
+	double shift_ratio;
 
 	std::string eigval_file;
 	std::string eigvec_file;
@@ -196,6 +201,9 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.add("compulsory","CORRELATION_FILE","correlation.data","the file to output the correlation matrix");
 	keys.add("compulsory","CORR_CAN_FILE","correlation2.data","the file to output the correlation canonical matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
+	keys.add("optional","BOLTZMANN_CONSTANT","(Default=0.008314472) the Boltzmann constant used to shift the bias.");
+	keys.add("optional","BIAS_SHIFT","a constant value to shift the bias during the reweighting");
+	keys.add("optional","RWTEMP","the temperature use to reweight (only be used with BIAS_SHIFT)");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
 	keys.add("optional","CORR_INFO_FILE","the file that output the information of CVs correlation");
 	keys.add("optional","RESCALE_FILE","the file that output rescaled trajectory");
@@ -205,9 +213,11 @@ void TICA::registerKeywords( Keywords& keys ){
 TICA::TICA(const ActionOptions&ao):
 Action(ao),
 ActionWithAveraging(ao),
-ignore_reweight(false),is_corr_info(false),is_rescale(false),is_read_corr(false),
+ignore_reweight(false),is_corr_info(false),
+is_rescale(false),is_read_corr(false),
 is_debug(false),is_int_time(false),use_int_calc(false),
-idata(0),narg(0),npoints(0),tot_steps(0),dsize(0),delta_tau(0.0),wnorm(0.0),
+idata(0),narg(0),npoints(0),tot_steps(0),dsize(0),kB(0.008314472),
+delta_tau(0.0),wnorm(0.0),bshift(0.0),shift_value(0.0),shift_ratio(1.0),
 current_args(getNumberOfArguments()),
 myaverages(getNumberOfArguments()),
 argument_names(getNumberOfArguments()),
@@ -265,6 +275,19 @@ data(getNumberOfArguments())
 	parse("EIGENVECTOR_FILE",eigvec_file);
 	parse("EIGENVALUE_FILE",eigval_file);
 	
+	parse("BOLTZMANN_CONSTANT",kB);
+
+	parse("BIAS_SHIFT",bshift);
+	if(fabs(bshift)>1.0e-6)
+	{
+		rw_temp=-1;
+		parse("RWTEMP",rw_temp);
+		plumed_massert(rw_temp>0,"if you want to use BIAS_SHIFT, RWTEMP must be setted up!");
+		double beta=1.0/(kB*rw_temp);
+		shift_value=beta*bshift;
+		shift_ratio=exp(shift_value);
+	}
+
 	parseFlag("UNIFORM_WEIGHTS",ignore_reweight);
 
 	if(ignore_reweight&&is_int_time)
@@ -379,6 +402,8 @@ data(getNumberOfArguments())
 	log.printf("  with delta lagged time: %f.\n",delta_tau);
 	log.printf("  with number of time points: %d.\n",npoints);
 	log.printf("  with time step size: %f.\n",dt);
+	log.printf("  with Boltzmann constant: %f.\n",kB);
+	log.printf("  with bias shift value: %f.\n",bshift);
 	if(ignore_reweight)
 		log.printf("  use uniform weights to calculate\n");
 	if(use_int_calc)
@@ -394,7 +419,7 @@ data(getNumberOfArguments())
 		log.printf("  read correlation from file: %s.\n",corr_input.c_str());
 		log.printf("  with lagged times:\n");
 		for(unsigned i=0;i!=atau.size();++i)
-			log.printf("    %d\t%f\t%f\n",int(i),atau[i]*dt,point_weights[i]);
+			log.printf("    %d\t%f\t%f\n",int(i),atau[i],point_weights[i]);
 	}
 }
 
@@ -761,8 +786,8 @@ void TICA::performAnalysis()
 
 void TICA::accumulate(){
 	// Get the arguments ready to transfer to reference configuration
-	double cdw=cweight*dt;
-	double ldw=lweight+std::log(dt);
+	double cdw=cweight*dt*shift_ratio;
+	double ldw=lweight+std::log(dt)+shift_value;
 	for(unsigned i=0;i<getNumberOfArguments();++i)
 	{
 		current_args[i]=getArgument(i);
