@@ -195,12 +195,12 @@ void TICA::registerKeywords( Keywords& keys ){
   	keys.add("compulsory","LAGGED_TIME","the total lagged time to calculate TICA");
 	keys.add("compulsory","TAU_NUMBER","100","how much points of lagged time to output");
 	keys.add("compulsory","STEP_SIZE","1.0","the simulation time step size");
-	keys.add("compulsory","EIGEN_NUMBERS","1","how many eigenvectors to be output (from large to small)");
 	keys.add("compulsory","EIGENVECTOR_FILE","eigenvector","the file to output the result");
 	keys.add("compulsory","EIGENVALUE_FILE","eigenvalue.data","the file to output the eigen value");
 	keys.add("compulsory","CORRELATION_FILE","correlation.data","the file to output the correlation matrix");
 	keys.add("compulsory","CORR_CAN_FILE","correlation2.data","the file to output the correlation canonical matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
+	keys.add("optional","EIGEN_NUMBERS","how many eigenvectors to be output (from large to small)");
 	keys.add("optional","BOLTZMANN_CONSTANT","(Default=0.008314472) the Boltzmann constant used to shift the bias.");
 	keys.add("optional","BIAS_SHIFT","a constant value to shift the bias during the reweighting");
 	keys.add("optional","RWTEMP","the temperature use to reweight (only be used with BIAS_SHIFT)");
@@ -267,6 +267,7 @@ data(getNumberOfArguments())
 		//~ nsize=floor(lagged_time/dt+0.5);
 	}
 
+	ncomp=narg;
 	parse("EIGEN_NUMBERS",ncomp);
 	if(ncomp>narg)
 		error("the EIGEN_NUMBER cannot be larger than the number of CVs");
@@ -409,7 +410,7 @@ data(getNumberOfArguments())
 	if(use_int_calc)
 		log.printf("  use integal algorithm to calculate all correlation\n");
 	log.printf("  with eigen values output file: %s\n",eigval_file.c_str());
-	log.printf("  with eigen vector output file: %s\n",eigvec_file.c_str());
+	log.printf("  with %d eigen vector output files started with name: %s\n",ncomp,eigvec_file.c_str());
 	if(is_rescale)
 		log.printf("  with rescaled output file: %s\n",rescale_file.c_str());
 	if(is_debug)
@@ -732,7 +733,7 @@ void TICA::performAnalysis()
 			unsigned cpid=0;
 			for(unsigned j=0;j!=narg;++j)
 			{
-				if(fabs(mvt[j][k]>vmax))
+				if(fabs(mvt[j][k])>vmax)
 				{
 					vmax=fabs(mvt[j][k]);
 					cpid=j;
@@ -741,10 +742,10 @@ void TICA::performAnalysis()
 			
 			if(ip>0&&evec[cpid]*pre_evec[k][cpid]<0)
 				mnorm*=-1;
-			
+
 			for(unsigned i=0;i!=narg;++i)
 				evec[i]/=mnorm;
-			
+
 			tica_res.push_back(evec);
 			
 			pre_evec[k]=evec;
