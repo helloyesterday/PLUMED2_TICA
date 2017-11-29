@@ -36,7 +36,7 @@ Time-lagged independent component analysis (TICA) using a large number of collec
 \par Examples
 
 A simple example is as below, it will use the TICA method to analyze the CVs cv1 and cv2 from metadynamics simulaiton (COLVAR file colvar.0.data)
-It will analyze the data using 20 different lagged times (from 0 to 100*20=2000).
+It will analyze the data using 20 different lag times (from 0 to 100*20=2000).
 
 \verbatim
 cv1: READ FILE=colvar.0.data VALUES=cv1 IGNORE_TIME
@@ -46,14 +46,14 @@ rw: REWEIGHT_METAD TEMP=330
 
 TICA ...
  ARG=cv1,cv2
- LAGGED_TIME=400
+ LAG_TIME=400
  TAU_NUMBER=100
  STEP_SIZE=0.2
  LOGWEIGHTS=rw
 ... TICA
 \endverbatim
 
-Using plumed \ref driver to perform the analysis, then you will get the eigenvalues file (default name eigenvalue.data) and largest eigenvectors (default name eigenvector0.data) at different lagged times.
+Using plumed \ref driver to perform the analysis, then you will get the eigenvalues file (default name eigenvalue.data) and largest eigenvectors (default name eigenvector0.data) at different lag times.
 
 After using TICA method, you will also get the correlation file (default name correlation.data).
 If you have several parallel trajectories (such as using multiple walkers) to be analyze,
@@ -67,7 +67,7 @@ rw: REWEIGHT_METAD TEMP=330
 
 TICA ...
  ARG=cv1,cv2
- LAGGED_TIME=400
+ LAG_TIME=400
  TAU_NUMBER=100
  STEP_SIZE=0.2
  LOGWEIGHTS=rw
@@ -103,7 +103,7 @@ private:
 	//~ unsigned nsize;
 	unsigned dsize;
 	
-	double lagged_time;
+	double lag_time;
 	double delta_tau;
 	double wnorm;
 	double dt;
@@ -188,8 +188,8 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.remove("SERIAL"); keys.remove("LOWMEM"); 
 	keys.remove("ARG");
 	keys.add("compulsory","ARG","the CVs for the input to calculate TICA"); 
-  	keys.add("compulsory","LAGGED_TIME","the total lagged time to calculate TICA");
-	keys.add("compulsory","TAU_NUMBER","100","how much points of lagged time to output");
+  	keys.add("compulsory","LAG_TIME","the total lag time to calculate TICA");
+	keys.add("compulsory","TAU_NUMBER","100","how much points of lag time to output");
 	keys.add("compulsory","STEP_SIZE","1.0","the simulation time step size");
 	keys.add("compulsory","EIGENVECTOR_FILE","eigenvector","the file to output the result");
 	keys.add("compulsory","EIGENVALUE_FILE","eigenvalue.data","the file to output the eigen value");
@@ -238,13 +238,13 @@ data(getNumberOfArguments())
 	}
 	
 	//~ parse("DELTA_TAU",delta_tau);
-	parse("LAGGED_TIME",lagged_time);
-	if(lagged_time<=0)
-		error("LAGGED_TIME could be larger than 0");
+	parse("LAG_TIME",lag_time);
+	if(lag_time<=0)
+		error("LAG_TIME could be larger than 0");
 	parse("TAU_NUMBER",npoints);
 	if(npoints==0)
 		error("TAU_NUMBER could not be 0");
-	delta_tau=lagged_time/npoints;
+	delta_tau=lag_time/npoints;
 	++npoints;
 	point_weights.assign(npoints,0);
 	
@@ -257,18 +257,18 @@ data(getNumberOfArguments())
 	if(fabs(tsize-dsize)<1e-6)
 	{
 		is_int_time=true;
-		//~ nsize=floor(lagged_time/dt+0.5);
+		//~ nsize=floor(lag_time/dt+0.5);
 	}
 
 	ncomp=narg;
 	parse("EIGEN_NUMBERS",ncomp);
-	if(ncomp>narg)
-		error("the EIGEN_NUMBER cannot be larger than the number of CVs");
+	plumed_massert(ncomp>0,"the EIGEN_NUMBER must be larger than 0!");
+	plumed_massert(ncomp<=narg,"the EIGEN_NUMBER cannot be larger than the number of CVs!");
+	
 	parse("CORRELATION_FILE",corr_file);
 	parse("CORR_CAN_FILE",corr_file2);
 	parse("EIGENVECTOR_FILE",eigvec_file);
 	parse("EIGENVALUE_FILE",eigval_file);
-
 
 	parseFlag("UNIFORM_WEIGHTS",ignore_reweight);
 
@@ -282,7 +282,7 @@ data(getNumberOfArguments())
 		ocorrinfo.link(*this);
 		ocorrinfo.open(rescale_file.c_str());
 		ocorrinfo.fmtField(" %e");
-		ocorrinfo.addConstantField("Lagged_Time");	
+		ocorrinfo.addConstantField("Lag_Time");	
 	}
 	
 	parse("RESCALE_FILE",rescale_file);
@@ -301,7 +301,7 @@ data(getNumberOfArguments())
 		odebug.link(*this);
 		odebug.open(debug_file.c_str());
 		odebug.fmtField(" %e");
-		odebug.addConstantField("Lagged_Time");
+		odebug.addConstantField("Lag_Time");
 	}
 	parse("READ_CORR_FILE",corr_input);
 	if(corr_input.size()>0)
@@ -324,12 +324,12 @@ data(getNumberOfArguments())
 		for(unsigned ip=0;ip!=npoints;++ip)
 		{
 			double lag_time=0;
-			icorr.scanField("LAGGED_TIME",lag_time);
+			icorr.scanField("LAG_TIME",lag_time);
 			double rnorm=0;
 			if(icorr.FieldExist("NORMALIZATION"))
 				icorr.scanField("NORMALIZATION",rnorm);
 			point_weights[ip]=rnorm;
-			plumed_massert(fabs(ip*delta_tau-lag_time)<1.0e-6,"the lagged time read from the correlation file mismatch!");
+			plumed_massert(fabs(ip*delta_tau-lag_time)<1.0e-6,"the lag time read from the correlation file mismatch!");
 			atau.push_back(unsigned(lag_time));
 			Matrix<double> cc(narg,narg);
 			for(unsigned i=0;i!=narg;++i)
@@ -361,7 +361,7 @@ data(getNumberOfArguments())
 	ocorr.printField("DIMENSION",int(narg));
 	ocorr.addConstantField("NPOINTS");
 	ocorr.printField("NPOINTS",int(npoints));
-	ocorr.addConstantField("LAGGED_TIME");
+	ocorr.addConstantField("LAG_TIME");
 	ocorr.addConstantField("NORMALIZATION");
 	
 	ocorr2.link(*this);
@@ -371,7 +371,7 @@ data(getNumberOfArguments())
 	ocorr2.printField("DIMENSION",int(narg));
 	ocorr2.addConstantField("NPOINTS");
 	ocorr2.printField("NPOINTS",int(npoints));
-	ocorr2.addConstantField("LAGGED_TIME");
+	ocorr2.addConstantField("LAG_TIME");
 	ocorr2.addConstantField("NORMALIZATION");
 	
 	oeigval.link(*this);
@@ -380,8 +380,8 @@ data(getNumberOfArguments())
 	checkRead();
 	
 	log.printf("  with %d arguments.\n",narg);
-	log.printf("  with toal lagged time: %f.\n",lagged_time);
-	log.printf("  with delta lagged time: %f.\n",delta_tau);
+	log.printf("  with toal lag time: %f.\n",lag_time);
+	log.printf("  with delta lag time: %f.\n",delta_tau);
 	log.printf("  with number of time points: %d.\n",npoints);
 	log.printf("  with time step size: %f.\n",dt);
 	if(ignore_reweight)
@@ -397,7 +397,7 @@ data(getNumberOfArguments())
 	if(is_read_corr)
 	{
 		log.printf("  read correlation from file: %s.\n",corr_input.c_str());
-		log.printf("  with lagged times:\n");
+		log.printf("  with lag times:\n");
 		for(unsigned i=0;i!=atau.size();++i)
 			log.printf("    %d\t%f\t%f\n",int(i),atau[i],point_weights[i]);
 	}
@@ -512,6 +512,15 @@ void TICA::performAnalysis()
 	unsigned eff_size=0;
 	for(unsigned i=0;i!=narg;++i)
 		if(eigval0[i]>0)	++eff_size;
+	log.printf("  with %d effective eigenvalues and eigenvectors.\n",int(eff_size));
+	
+	plumed_massert(eff_size>0,"All the eigenvalues are less than 0, TICA could not be performed!");
+	
+	if(ncomp>eff_size)
+	{
+		log.printf("  as the EIGEN_NUMBER (%d) is larger than the effective one, it will be reduced.\n",int(ncomp));
+		ncomp=eff_size;
+	}
 	
 	std::vector<double> s_sqrt;
 	for(unsigned i=0;i!=eff_size;++i)
@@ -531,11 +540,12 @@ void TICA::performAnalysis()
 	log.printf("Running TICA ...\n");
 	//~ std::vector<unsigned> compid(ncomp,0);
 	std::vector<std::vector<double> > pre_evec(ncomp);
+	std::vector<bool> resign(ncomp,false);
 	for(unsigned ip=0;ip!=npoints;++ip)
 	{
 		double tau=ip*delta_tau;
 		
-		plumed_massert(tau<rw_time,"the lagged time is too large!");
+		plumed_massert(tau<rw_time,"the lag time is too large!");
 		
 		double ntau=tau/dt;
 		unsigned int_tau=floor(ntau+0.5);
@@ -543,10 +553,10 @@ void TICA::performAnalysis()
 		if(use_int_calc||(ignore_reweight&&fabs(int_tau-ntau)<1e-6))
 		{
 			is_use_int_calc=true;
-			log.printf("  Setp: %d\tLagged Time: %f (%f * %d)\n",ip,tau,dt,int_tau);
+			log.printf("  Setp: %d\tLag Time: %f (%f * %d)\n",ip,tau,dt,int_tau);
 		}
 		else
-			log.printf("  Setp: %d\tLagged Time: %f\n",ip,tau);
+			log.printf("  Setp: %d\tLag Time: %f\n",ip,tau);
 
 		xnorm=0;
 		Matrix<double> Clag;
@@ -566,8 +576,8 @@ void TICA::performAnalysis()
 			xnorm+=point_weights[ip];
 		}
 		
-		ocorr.printField("LAGGED_TIME",tau);
-		ocorr2.printField("LAGGED_TIME",tau);
+		ocorr.printField("LAG_TIME",tau);
+		ocorr2.printField("LAG_TIME",tau);
 
 		for(unsigned i=0;i!=narg;++i)
 		{
@@ -595,6 +605,7 @@ void TICA::performAnalysis()
 		Matrix<double> C_can;
 		mult(X_adj,CsymX,C_can);
 		
+		//~ C_can = 0.5*(C_can+C_can.trans());
 		Matrix<double> C_can_T;
 		transpose(C_can,C_can_T);
 		for(unsigned i=0;i!=narg;++i)
@@ -603,9 +614,19 @@ void TICA::performAnalysis()
 				C_can[i][j]=(C_can[i][j]+C_can_T[i][j])/2;
 		}
 		
+		for(unsigned i=0;i!=narg;++i)
+		{
+			ocorr2.printField("NORMALIZATION",xnorm);
+			ocorr2.printField("MATRIX",row_args[i]);
+			for(unsigned j=0;j!=narg;++j)
+				ocorr2.printField(col_args[j],C_can[i][j]);
+			ocorr2.printField();
+		}
+		ocorr2.flush();
+		
 		if(is_debug)
 		{
-			odebug.printField("LAGGED_TIME",tau);
+			odebug.printField("LAG_TIME",tau);
 			for(unsigned i=0;i!=narg;++i)
 			{
 				odebug.printField("ROW",int(i));
@@ -619,16 +640,6 @@ void TICA::performAnalysis()
 		std::vector<double> nwt;
 		Matrix<double> nvt;
 		diagMat(C_can,nwt,nvt);
-		
-		for(unsigned i=0;i!=narg;++i)
-		{
-			ocorr2.printField("NORMALIZATION",xnorm);
-			ocorr2.printField("MATRIX",row_args[i]);
-			for(unsigned j=0;j!=narg;++j)
-				ocorr2.printField(col_args[j],C_can[i][j]);
-			ocorr2.printField();
-		}
-		ocorr2.flush();
 		
 		std::vector<double> eigval2;
 		std::vector<std::vector<double> > eigvec2;
@@ -668,7 +679,7 @@ void TICA::performAnalysis()
 		log.printf("\n\n");
 
 		oeigval.fmtField(" %f");
-		oeigval.printField("LAGGED_TIME",tau);
+		oeigval.printField("LAG_TIME",tau);
 		for(unsigned i=0;i!=narg;++i)
 		{
 			std::string id;
@@ -719,8 +730,15 @@ void TICA::performAnalysis()
 				}
 			}
 			
-			if(ip>0&&evec[cpid]*pre_evec[k][cpid]<0)
-				mnorm*=-1;
+			if(ip>0)
+			{
+				if(evec[cpid]*pre_evec[k][cpid]<0)
+					mnorm*=-1;
+				if(evec[cpid]<0)
+					resign[k]=true;
+				else
+					resign[k]=false;
+			}
 
 			for(unsigned i=0;i!=narg;++i)
 				evec[i]/=mnorm;
@@ -749,13 +767,16 @@ void TICA::performAnalysis()
 		for(unsigned j=0;j!=npoints;++j)
 		{
 			double tau=j*delta_tau;
-			oeigvec.printField("LAGGED_TIME",tau);
+			oeigvec.printField("LAG_TIME",tau);
 			for(unsigned k=0;k!=narg;++k)
 			{
+				double vvec=eigvec_points[j][i][k];
+				if(resign[i])
+					vvec*=-1;
 				std::string id;
 				Tools::convert(k,id);
 				std::string eigid="EIGVEC"+id+"_"+argument_names[k];
-				oeigvec.printField(eigid,eigvec_points[j][i][k]);
+				oeigvec.printField(eigid,vvec);
 			}
 			oeigvec.printField();
 		}
@@ -847,34 +868,11 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 		}
 		twt=weights;
 	}
-	//~ else if(ignore_reweight)
-	//~ {
-		//~ unsigned ibeg=0;
-		//~ unsigned iend=int(_tau);
-		//~ double dend=(_tau-iend)*dt;
-		//~ double dbeg=(1.0-dend)*dt;
-		//~ 
-		//~ for(unsigned i=0;i!=tot_steps;++i)
-		//~ {
-			//~ xid.push_back(ibeg);
-			//~ yid.push_back(iend++);
-			//~ twt.push_back(dend);
-			//~ fnorm+=dend;
-//~ 
-			//~ if(iend==tot_steps)
-				//~ break;
-//~ 
-			//~ xid.push_back(ibeg++);
-			//~ yid.push_back(iend);
-			//~ twt.push_back(dbeg);
-			//~ fnorm+=dbeg;
-		//~ }
-	//~ }
 	else
 	{
 		// the beginnig time;
 		double tbeg=0;
-		// the end time of lagged time (begin time plus lagged time);
+		// the end time of lag time (begin time plus lag time);
 		double tend=_tau;
 		
 		// the index of the beginning time;
@@ -890,7 +888,7 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 			}
 		}
 		if(iend==neff.size())
-			error("Cannot find the index iend: the lagged time is too large!");
+			error("Cannot find the index iend: the lag time is too large!");
 		// the different time to the next index
 		double dbeg=neff[ibeg]+weights[ibeg]-tbeg;
 		double dend=neff[iend]+weights[iend]-tend;
@@ -942,7 +940,7 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 	}
 	if(is_corr_info)
 	{	
-		ocorrinfo.printField("Lagged_Time",_tau);		
+		ocorrinfo.printField("Lag_Time",_tau);		
 		for(unsigned i=0;i!=twt.size();++i)
 		{
 			ocorrinfo.printField("Index",int(i));
