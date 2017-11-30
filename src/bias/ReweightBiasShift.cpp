@@ -22,7 +22,7 @@
 #include "ReweightBase.h"
 #include "core/ActionRegister.h"
 
-//+PLUMEDOC REWEIGHTING REWEIGHT_BIAS
+//+PLUMEDOC REWEIGHTING REWEIGHT_BIAS_SHIFT
 /*
 Calculate weights for ensemble averages that negate the effect the bias has on the region of phase space explored
 
