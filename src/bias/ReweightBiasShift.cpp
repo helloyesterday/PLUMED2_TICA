@@ -46,7 +46,7 @@ we use reweighting into order to discount the effect of the bias from our final 
 \verbatim 
 x: DISTANCE ATOMS=1,2
 RESTRAINT ARG=x SLOPE=1.0 AT=0.0
-as: REWEIGHT_BIAS TEMP=300
+as: REWEIGHT_BIAS_SHIFT TEMP=300
 
 HISTOGRAM ...
   ARG=x
@@ -68,7 +68,7 @@ are almost larger than 2000, we can add a shift value -2000 (SHIFT=-2000) to the
 \verbatim 
 x: DISTANCE ATOMS=1,2
 RESTRAINT ARG=x SLOPE=1.0 AT=0.0
-as: REWEIGHT_BIAS TEMP=300 SHIFT=-2000
+as: REWEIGHT_BIAS_SHIFT TEMP=300 SHIFT=-2000
 
 HISTOGRAM ...
   ARG=x
