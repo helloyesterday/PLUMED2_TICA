@@ -401,6 +401,7 @@ data(getNumberOfArguments())
 		for(unsigned i=0;i!=atau.size();++i)
 			log.printf("    %d\t%f\t%f\n",int(i),atau[i],point_weights[i]);
 	}
+	log<<"Bibliography "<<plumed.cite("McCarty and Parrinello, J. Chem. Phys. 147, 204109 (2017)");
 }
 
 TICA::~TICA()
