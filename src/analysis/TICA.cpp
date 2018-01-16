@@ -21,6 +21,7 @@
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ */
 #include <numeric>
 #include "vesselbase/ActionWithAveraging.h"
+#include "core/PlumedMain.h"
 #include "core/ActionRegister.h"
 #include "AverageVessel.h"
 #include "tools/Matrix.h"
