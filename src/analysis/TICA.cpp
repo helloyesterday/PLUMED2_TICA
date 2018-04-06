@@ -89,9 +89,12 @@ private:
 	bool is_corr_info;
 	bool is_rescale;
 	bool is_read_corr;
+	bool is_read_avg;
 	bool is_debug;
 	bool is_int_time;
+	bool is_output_can;
 	bool use_int_calc;
+	bool use_fix_aver;
 
 	// The piece of data we are inserting
 	unsigned idata;
@@ -110,6 +113,7 @@ private:
 	double dt;
 	double rw_time;
 	double rw_temp;
+	double read_weight;
 
 	std::string eigval_file;
 	std::string eigvec_file;
@@ -119,6 +123,7 @@ private:
 	std::string corr_info_file;
 	std::string rescale_file;
 	std::string debug_file;
+	std::string aver_file;
 	
 	OFile oeigval;
 	OFile ocorr;
@@ -136,6 +141,7 @@ private:
 	// Tempory vector to store values of arguments
 	std::vector<double> current_args;
 	std::vector<double> myaverages;
+	std::vector<double> read_aver;
 	std::vector<double> Wnew;
 	std::vector<double> atau;
 	std::vector<double> neff;
@@ -145,6 +151,7 @@ private:
 	std::vector<std::string> argument_names;
 	std::vector<std::string> row_args;
 	std::vector<std::string> col_args;
+	std::vector<std::string> mean_names;
 	
 	// The data we are going to analyze
 	std::vector<std::vector<double> > data;
@@ -192,13 +199,14 @@ void TICA::registerKeywords( Keywords& keys ){
   	keys.add("compulsory","LAG_TIME","the total lag time to calculate TICA");
 	keys.add("compulsory","TAU_NUMBER","100","how much points of lag time to output");
 	keys.add("compulsory","STEP_SIZE","1.0","the simulation time step size");
-	keys.add("compulsory","EIGENVECTOR_FILE","eigenvector","the file to output the result");
-	keys.add("compulsory","EIGENVALUE_FILE","eigenvalue.data","the file to output the eigen value");
-	keys.add("compulsory","CORRELATION_FILE","correlation.data","the file to output the correlation matrix");
-	keys.add("compulsory","CORR_CAN_FILE","correlation2.data","the file to output the correlation canonical matrix");
+	keys.add("compulsory","EIGENVECTOR_FILE","tica_eigenvector","the file to output the result");
+	keys.add("compulsory","EIGENVALUE_FILE","tica_eigenvalue.data","the file to output the eigen value");
+	keys.add("compulsory","CORRELATION_FILE","tica_correlation.data","the file to output the correlation matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
+	keys.add("optional","CORR_CAN_FILE","the file to output the correlation canonical matrix");
 	keys.add("optional","EIGEN_NUMBERS","how many eigenvectors to be output (from large to small)");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
+	keys.add("optional","AVERAGE_FILE","read the average values from file");
 	keys.add("optional","CORR_INFO_FILE","the file that output the information of CVs correlation");
 	keys.add("optional","RESCALE_FILE","the file that output rescaled trajectory");
 	keys.add("optional","DEBUG_FILE","the file that debug information");
@@ -208,14 +216,16 @@ TICA::TICA(const ActionOptions&ao):
 Action(ao),
 ActionWithAveraging(ao),
 ignore_reweight(false),is_corr_info(false),
-is_rescale(false),is_read_corr(false),
-is_debug(false),is_int_time(false),use_int_calc(false),
+is_rescale(false),is_read_corr(false),is_read_avg(false),
+is_debug(false),is_int_time(false),is_output_can(false),
+use_int_calc(false),use_fix_aver(false),
 idata(0),narg(0),npoints(0),tot_steps(0),dsize(0),
 delta_tau(0.0),wnorm(0.0),
 current_args(getNumberOfArguments()),
 myaverages(getNumberOfArguments()),
+read_aver(getNumberOfArguments(),0),
 argument_names(getNumberOfArguments()),
-data(getNumberOfArguments())
+data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 {
 	addValue(); // Create a value so that we can output the average
 	narg=getNumberOfArguments();
@@ -236,6 +246,7 @@ data(getNumberOfArguments())
 		std::string rowid="ROW"+id+"_"+argument_names[i];
 		col_args.push_back(colid);
 		row_args.push_back(rowid);
+		mean_names.push_back(argument_names[i]+"_mean");
 	}
 	
 	//~ parse("DELTA_TAU",delta_tau);
@@ -267,7 +278,6 @@ data(getNumberOfArguments())
 	plumed_massert(ncomp<=narg,"the EIGEN_NUMBER cannot be larger than the number of CVs!");
 	
 	parse("CORRELATION_FILE",corr_file);
-	parse("CORR_CAN_FILE",corr_file2);
 	parse("EIGENVECTOR_FILE",eigvec_file);
 	parse("EIGENVALUE_FILE",eigval_file);
 
@@ -304,10 +314,39 @@ data(getNumberOfArguments())
 		odebug.fmtField(" %e");
 		odebug.addConstantField("Lag_Time");
 	}
+	
+	parse("AVERAGE_FILE",aver_file);
+	if(aver_file.size()>0)
+	{
+		IFile iaver;
+		iaver.link(*this);
+		iaver.open(aver_file.c_str());
+		iaver.allowIgnoredFields();
+		
+		for(unsigned i=0;i!=narg;++i)
+		{
+			if(iaver.FieldExist(mean_names[i]))
+				iaver.scanField(mean_names[i],read_aver[i]);
+			else
+				error("Could not find the Field \""+mean_names[i]+"\" in file: "+aver_file);
+		}
+		use_fix_aver=true;
+	}
+	
 	parse("READ_CORR_FILE",corr_input);
+	
 	if(corr_input.size()>0)
 	{
 		is_read_corr=true;
+	}
+	else if(getRestart()&&icorr.FileExist(corr_file))
+	{
+		corr_input=corr_file;
+		is_read_corr=true;
+	}
+	
+	if(is_read_corr)
+	{
 		icorr.link(*this);
 		icorr.open(corr_input.c_str());
 		icorr.allowIgnoredFields();
@@ -321,7 +360,10 @@ data(getNumberOfArguments())
 		if(icorr.FieldExist("NPOINTS"))
 			icorr.scanField("NPOINTS",_npoints);
 		plumed_massert(unsigned(_npoints)==npoints,"the number of points read from the correlation file mismatch!");
-			
+		
+		double tt_read_avg=true;
+		if(use_fix_aver)
+			tt_read_avg=false;
 		for(unsigned ip=0;ip!=npoints;++ip)
 		{
 			double lag_time=0;
@@ -330,11 +372,20 @@ data(getNumberOfArguments())
 			if(icorr.FieldExist("NORMALIZATION"))
 				icorr.scanField("NORMALIZATION",rnorm);
 			point_weights[ip]=rnorm;
+			
 			plumed_massert(fabs(ip*delta_tau-lag_time)<1.0e-6,"the lag time read from the correlation file mismatch!");
 			atau.push_back(unsigned(lag_time));
 			Matrix<double> cc(narg,narg);
 			for(unsigned i=0;i!=narg;++i)
 			{
+				if(ip==0&&tt_read_avg)
+				{
+					if(icorr.FieldExist(mean_names[i]))
+						icorr.scanField(mean_names[i],read_aver[i]);
+					else
+						tt_read_avg=false;
+				}
+				
 				std::string rowarg;
 				icorr.scanField("MATRIX",rowarg);
 				plumed_massert(rowarg==row_args[i],"the label of rows read from the correlation file mismatch! (\""+rowarg+"\" vs \""+row_args[i]+"\")");
@@ -351,12 +402,15 @@ data(getNumberOfArguments())
 			}
 			Cread.push_back(cc);
 		}
+		is_read_avg=tt_read_avg;
 		icorr.close();
+		read_weight=point_weights[0];
 	}
-	
 	
 	ocorr.link(*this);
 	ocorr.open(corr_file.c_str());
+	if(getRestart())
+		ocorr.rewind();
 	ocorr.fmtField(" %e");
 	ocorr.addConstantField("DIMENSION");
 	ocorr.printField("DIMENSION",int(narg));
@@ -365,18 +419,27 @@ data(getNumberOfArguments())
 	ocorr.addConstantField("LAG_TIME");
 	ocorr.addConstantField("NORMALIZATION");
 	
-	ocorr2.link(*this);
-	ocorr2.open(corr_file2.c_str());
-	ocorr2.fmtField(" %e");
-	ocorr2.addConstantField("DIMENSION");
-	ocorr2.printField("DIMENSION",int(narg));
-	ocorr2.addConstantField("NPOINTS");
-	ocorr2.printField("NPOINTS",int(npoints));
-	ocorr2.addConstantField("LAG_TIME");
-	ocorr2.addConstantField("NORMALIZATION");
+	parse("CORR_CAN_FILE",corr_file2);
+	if(corr_file2.size()>0)
+	{
+		is_output_can=true;
+			ocorr2.link(*this);
+		ocorr2.open(corr_file2.c_str());
+		if(getRestart())
+			ocorr2.rewind();
+		ocorr2.fmtField(" %e");
+		ocorr2.addConstantField("DIMENSION");
+		ocorr2.printField("DIMENSION",int(narg));
+		ocorr2.addConstantField("NPOINTS");
+		ocorr2.printField("NPOINTS",int(npoints));
+		ocorr2.addConstantField("LAG_TIME");
+		ocorr2.addConstantField("NORMALIZATION");
+	}
 	
 	oeigval.link(*this);
 	oeigval.open(eigval_file.c_str());
+	if(getRestart())
+		oeigval.rewind();
 
 	checkRead();
 	
@@ -395,20 +458,33 @@ data(getNumberOfArguments())
 		log.printf("  with rescaled output file: %s\n",rescale_file.c_str());
 	if(is_debug)
 		log.printf("  with debug file: %s\n",debug_file.c_str());
+	if(use_fix_aver)
+	{
+		log.printf("  use average values from file: %s\n",aver_file.c_str());
+		log.printf("  with average values:\n");
+		for(unsigned i=0;i!=narg;++i)
+			log.printf("  %d\t%s\t%f\n",int(i),mean_names[i].c_str(),read_aver[i]);
+	}
 	if(is_read_corr)
 	{
 		log.printf("  read correlation from file: %s.\n",corr_input.c_str());
+		if(is_read_avg)
+		{
+			log.printf("  with average values:\n");
+			for(unsigned i=0;i!=narg;++i)
+				log.printf("  %d\t%s\t%f\n",int(i),mean_names[i].c_str(),read_aver[i]);
+		}
 		log.printf("  with lag times:\n");
 		for(unsigned i=0;i!=atau.size();++i)
 			log.printf("    %d\t%f\t%f\n",int(i),atau[i],point_weights[i]);
 	}
-	log<<"Bibliography "<<plumed.cite("McCarty and Parrinello, J. Chem. Phys. 147, 204109 (2017)");
 }
 
 TICA::~TICA()
 {
 	ocorr.close();
-	ocorr2.close();
+	if(is_output_can)
+		ocorr2.close();
 	//~ for(unsigned i=0;i!=oeigvecs.size();++i)
 		//~ oeigvecs[i].close();
 	oeigval.close();
@@ -425,18 +501,52 @@ void TICA::performAnalysis()
 	tot_steps=logweights.size();
 	if(ignore_reweight)
 		rw_time=tot_steps*dt;
-		
-	avgdata.resize(narg,std::vector<double>(tot_steps));
-	for(unsigned i=0;i!=narg;++i)
+
+	double tot_norm=wnorm;
+	std::vector<double> old_aver=myaverages;
+	if(use_fix_aver)
 	{
-		myaverages[i]/=wnorm;
-		for(unsigned j=0;j!=tot_steps;++j)
-			avgdata[i][j]=data[i][j]-myaverages[i];
+		myaverages=read_aver;
+	}
+	else
+	{
+		if(is_read_avg)
+			tot_norm+=read_weight;
+
+		for(unsigned i=0;i!=narg;++i)
+		{
+			if(is_read_avg)
+			{
+				old_aver[i]/=wnorm;
+				myaverages[i]+=read_weight*read_aver[i];
+			}
+			myaverages[i]/=tot_norm;
+			for(unsigned j=0;j!=tot_steps;++j)
+			{
+				avgdata[i].push_back(data[i][j]-myaverages[i]);
+			}
+		}
 	}
 	log.printf("Fininished reading.\n");
 	log.printf("  with reading steps: %d.\n",idata);
 	log.printf("  with total steps: %d.\n",tot_steps);
-
+	if(!use_fix_aver)
+	{
+		if(is_read_avg)
+		{
+			log.printf("  with reading and final average values:\n");
+			for(unsigned i=0;i!=narg;++i)
+				log.printf("  %d\t%s\t%f\t%f\n",int(i),mean_names[i].c_str(),old_aver[i],myaverages[i]);
+			log.printf("  with reading and final noramlization factors: %f and %f.\n",wnorm,tot_norm);
+		}
+		else
+		{
+			log.printf("  with reading average values:\n");
+			for(unsigned i=0;i!=narg;++i)
+				log.printf("  %d\t%s\t%f\n",int(i),mean_names[i].c_str(),myaverages[i]);
+			log.printf("  with reading noramlization factor: %f.\n",wnorm);
+		}
+	}
 
 	if(!use_int_calc)
 	{
@@ -453,8 +563,16 @@ void TICA::performAnalysis()
 			{
 				orescale.printField("INDEX",int(i));
 				orescale.printField("RESCALED_TIME",neff[i]);
-				for(unsigned j=0;j!=narg;++j)
-					orescale.printField(argument_names[j],data[j][i]);
+				if(use_fix_aver)
+				{
+					for(unsigned j=0;j!=narg;++j)
+						orescale.printField(argument_names[j],avgdata[j][i]);
+				}
+				else
+				{
+					for(unsigned j=0;j!=narg;++j)
+						orescale.printField(argument_names[j],data[j][i]);
+				}
 				orescale.printField("WEIGHT",weights[i]);
 				orescale.printField();
 			}
@@ -478,6 +596,12 @@ void TICA::performAnalysis()
 			for(unsigned j=0;j!=narg;++j)
 				Czero[i][j]=cr0*Cread[0][i][j]+cr1*Czero[i][j];
 		}
+	}
+	
+	for(unsigned i=0;i!=narg;++i)
+	{
+		ocorr.addConstantField(mean_names[i]);
+		ocorr.printField(mean_names[i],myaverages[i]);
 	}
 	
 	std::vector<double> wt0;
@@ -507,7 +631,6 @@ void TICA::performAnalysis()
 	log.printf("  with Eigenvalues of <C(0),C(0)>.\n");
 	for(unsigned i=0;i!=narg;++i)
 		log.printf("    %d\t%f\n",int(i),eigval0[i]);
-	log.printf("\n");
 
 	std::vector<std::vector<double> >& U=eigvec0;
 	
@@ -579,7 +702,8 @@ void TICA::performAnalysis()
 		}
 		
 		ocorr.printField("LAG_TIME",tau);
-		ocorr2.printField("LAG_TIME",tau);
+		if(is_output_can)
+			ocorr2.printField("LAG_TIME",tau);
 
 		for(unsigned i=0;i!=narg;++i)
 		{
@@ -616,15 +740,18 @@ void TICA::performAnalysis()
 				C_can[i][j]=(C_can[i][j]+C_can_T[i][j])/2;
 		}
 		
-		for(unsigned i=0;i!=narg;++i)
+		if(is_output_can)
 		{
-			ocorr2.printField("NORMALIZATION",xnorm);
-			ocorr2.printField("MATRIX",row_args[i]);
-			for(unsigned j=0;j!=narg;++j)
-				ocorr2.printField(col_args[j],C_can[i][j]);
-			ocorr2.printField();
+			for(unsigned i=0;i!=narg;++i)
+			{
+				ocorr2.printField("NORMALIZATION",xnorm);
+				ocorr2.printField("MATRIX",row_args[i]);
+				for(unsigned j=0;j!=narg;++j)
+					ocorr2.printField(col_args[j],C_can[i][j]);
+				ocorr2.printField();
+			}
+			ocorr2.flush();
 		}
-		ocorr2.flush();
 		
 		if(is_debug)
 		{
@@ -763,6 +890,8 @@ void TICA::performAnalysis()
 		Tools::convert(i,id);
 		std::string name=eigvec_file+id+".data";
 		oeigvec.open(name.c_str());
+		if(getRestart())
+			oeigvec.rewind();
 		oeigvec.addConstantField("COMPONENT");
 		oeigvec.printField("COMPONENT",int(i));
 		oeigvec.fmtField(" %e");
@@ -791,14 +920,26 @@ void TICA::accumulate(){
 	// Get the arguments ready to transfer to reference configuration
 	double cdw=cweight*dt;
 	double ldw=lweight+std::log(dt);
-	for(unsigned i=0;i<getNumberOfArguments();++i)
+	
+	if(use_fix_aver)
 	{
-		current_args[i]=getArgument(i);
-		data[i].push_back(current_args[i]);
-		if(ignore_reweight)
-			myaverages[i]+=current_args[i]*dt;
-		else
-			myaverages[i]+=current_args[i]*cdw;
+		for(unsigned i=0;i<getNumberOfArguments();++i)
+		{
+			current_args[i]=getArgument(i);
+			avgdata[i].push_back(current_args[i]-read_aver[i]);
+		}
+	}
+	else
+	{
+		for(unsigned i=0;i<getNumberOfArguments();++i)
+		{
+			current_args[i]=getArgument(i);
+			data[i].push_back(current_args[i]);
+			if(ignore_reweight)
+				myaverages[i]+=current_args[i]*dt;
+			else
+				myaverages[i]+=current_args[i]*cdw;
+		}
 	}
 
 	// Get the arguments and store them in a vector of vectors
