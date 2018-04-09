@@ -54,13 +54,16 @@ TICA ...
 ... TICA
 \endverbatim
 
-Using plumed \ref driver to perform the analysis, then you will get the eigenvalues file (default name eigenvalue.data) and largest eigenvectors (default name eigenvector0.data) at different lag times.
+Using plumed \ref driver to perform the analysis, then you will get the eigenvalues file (default name tica_eigenvalue.data) and
+eigenvectors (default name tica_eigenvector*.data) at different lag times.
 
-After using TICA method, you will also get the correlation file (default name correlation.data).
+After using TICA method, you will also get the correlation file (default name tica_correlation.data).
 If you have several parallel trajectories (such as using multiple walkers) to be analyze,
-this correlation file can be read as the restart file to analyze the next trajectory:
+this correlation file can be used as the restart file to analyze the next trajectory:
 
 \verbatim
+RESTART
+
 cv1: READ FILE=colvar.1.data VALUES=cv1 IGNORE_TIME
 cv2: READ FILE=colvar.1.data VALUES=cv2 IGNORE_TIME
 rbias: READ FILE=colvar.1.data VALUES=metad.rbias IGNORE_TIME
@@ -72,9 +75,8 @@ TICA ...
  TAU_NUMBER=100
  STEP_SIZE=0.2
  LOGWEIGHTS=rw
- READ_CORR_FILE=correlation.data
 ... TICA
-\endverbatim 
+\endverbatim
 
 */
 //+ENDPLUMEDOC
@@ -1022,14 +1024,15 @@ Matrix<double> TICA::build_correlation_float(double& fnorm,double _tau)
 		unsigned ibeg=0;
 		// the index of the end time;
 		unsigned iend=neff.size();
-		for(unsigned i=0;i!=neff.size()-1;++i)
+		for(unsigned i=0;i!=neff.size();++i)
 		{
-			if(_tau>=neff[i]&&_tau<neff[i+1])
+			if(_tau>=neff[i]&&_tau<(neff[i]+weights[i]))
 			{
 				iend=i;
 				break;
 			}
 		}
+		
 		if(iend==neff.size())
 			error("Cannot find the index iend: the lag time is too large!");
 		// the different time to the next index
