@@ -97,6 +97,7 @@ private:
 	bool is_output_can;
 	bool use_int_calc;
 	bool use_fix_aver;
+	bool use_ind_avg;
 
 	// The piece of data we are inserting
 	unsigned idata;
@@ -205,10 +206,11 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.add("compulsory","EIGENVALUE_FILE","tica_eigenvalue.data","the file to output the eigen value");
 	keys.add("compulsory","CORRELATION_FILE","tica_correlation.data","the file to output the correlation matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
+	keys.addFlag("INDEPENDENT_AVERAGE",false,"do not update the average value when reading another correlation file. Should NOT be used together with AVERAGE_FILE");
 	keys.add("optional","CORR_CAN_FILE","the file to output the correlation canonical matrix");
 	keys.add("optional","EIGEN_NUMBERS","how many eigenvectors to be output (from large to small)");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
-	keys.add("optional","AVERAGE_FILE","read the average values from file");
+	keys.add("optional","AVERAGE_FILE","read the average values from file.  Should NOT be used together with INDEPENDENT_AVERAGE");
 	keys.add("optional","CORR_INFO_FILE","the file that output the information of CVs correlation");
 	keys.add("optional","RESCALE_FILE","the file that output rescaled trajectory");
 	keys.add("optional","DEBUG_FILE","the file that debug information");
@@ -284,6 +286,7 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 	parse("EIGENVALUE_FILE",eigval_file);
 
 	parseFlag("UNIFORM_WEIGHTS",ignore_reweight);
+	parseFlag("INDEPENDENT_AVERAGE",use_ind_avg);
 
 	if(ignore_reweight&&is_int_time)
 		use_int_calc=true;
@@ -320,6 +323,8 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 	parse("AVERAGE_FILE",aver_file);
 	if(aver_file.size()>0)
 	{
+		if(use_ind_avg)
+			error("AVERAGE_FILE and INDEPENDENT_AVERAGE should NOT be used together!");
 		IFile iaver;
 		iaver.link(*this);
 		iaver.open(aver_file.c_str());
@@ -460,6 +465,8 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 		log.printf("  with rescaled output file: %s\n",rescale_file.c_str());
 	if(is_debug)
 		log.printf("  with debug file: %s\n",debug_file.c_str());
+	if(use_ind_avg)
+		log.printf("  with indepedent average values reading from the trajectory to calculate the correlation matrix\n");
 	if(use_fix_aver)
 	{
 		log.printf("  use average values from file: %s\n",aver_file.c_str());
@@ -512,12 +519,12 @@ void TICA::performAnalysis()
 	}
 	else
 	{
-		if(is_read_avg)
+		if(is_read_avg&&!use_ind_avg)
 			tot_norm+=read_weight;
 
 		for(unsigned i=0;i!=narg;++i)
 		{
-			if(is_read_avg)
+			if(is_read_avg&&!use_ind_avg)
 			{
 				old_aver[i]/=wnorm;
 				myaverages[i]+=read_weight*read_aver[i];
@@ -672,8 +679,6 @@ void TICA::performAnalysis()
 	{
 		double tau=ip*delta_tau;
 		
-		plumed_massert(tau<rw_time,"the lag time is too large!");
-		
 		double ntau=tau/dt;
 		unsigned int_tau=floor(ntau+0.5);
 		bool is_use_int_calc=false;
@@ -684,23 +689,53 @@ void TICA::performAnalysis()
 		}
 		else
 			log.printf("  Setp: %d\tLag Time: %f\n",ip,tau);
+		
+		bool empty_matrix=false;
+		if(tau>=rw_time)
+		{
+			log.printf("  WARNING! The lag time is larger than the size of trajectory.\n");
+			if(is_read_corr)
+				log.printf("  The correlation matrix will be directly read from the correlation file \"%s\" \n",corr_file.c_str());
+				
+			empty_matrix=true;
+		}
 
 		xnorm=0;
-		Matrix<double> Clag;
-		if(is_use_int_calc)
-			Clag=build_correlation_integer(xnorm,int_tau);
-		else
-			Clag=build_correlation_float(xnorm,tau);
-		if(is_read_corr)
+		Matrix<double> Clag(narg,narg);
+		if(empty_matrix)
 		{
-			double ncr0=point_weights[ip]/(point_weights[ip]+xnorm);
-			double ncr1=xnorm/(point_weights[ip]+xnorm);
 			for(unsigned i=0;i!=narg;++i)
 			{
 				for(unsigned j=0;j!=narg;++j)
-					Clag[i][j]=ncr0*Cread[ip][i][j]+ncr1*Clag[i][j];
+					Clag[i][j]=0;
 			}
-			xnorm+=point_weights[ip];
+		}
+		else
+		{
+			if(is_use_int_calc)
+				Clag=build_correlation_integer(xnorm,int_tau);
+			else
+				Clag=build_correlation_float(xnorm,tau);
+		}
+		
+		if(is_read_corr)
+		{
+			if(empty_matrix)
+			{
+				Clag=Cread[ip];
+				xnorm=point_weights[ip];
+			}
+			else
+			{
+				double ncr0=point_weights[ip]/(point_weights[ip]+xnorm);
+				double ncr1=xnorm/(point_weights[ip]+xnorm);
+				for(unsigned i=0;i!=narg;++i)
+				{
+					for(unsigned j=0;j!=narg;++j)
+						Clag[i][j]=ncr0*Cread[ip][i][j]+ncr1*Clag[i][j];
+				}
+				xnorm+=point_weights[ip];
+			}
 		}
 		
 		ocorr.printField("LAG_TIME",tau);
@@ -717,171 +752,174 @@ void TICA::performAnalysis()
 		}
 		ocorr.flush();
 
-		//~ Matrix<double> C_sym = 0.5*(Clag+Clag.trans());
-		Matrix<double> Clag_T;
-		transpose(Clag,Clag_T);
-		Matrix<double> C_sym(narg,narg);
-		for(unsigned i=0;i!=narg;++i)
+		if(!(empty_matrix&&!is_read_corr)&&xnorm>0)
 		{
-			for(unsigned j=0;j!=narg;++j)
-				C_sym[i][j]=(Clag[i][j]+Clag_T[i][j])/2;
-		}
-		
-		//~ Matrix<double> C_can = X_adj*(C_sym*X);
-		Matrix<double> CsymX;
-		mult(C_sym,X,CsymX);
-		Matrix<double> C_can;
-		mult(X_adj,CsymX,C_can);
-		
-		//~ C_can = 0.5*(C_can+C_can.trans());
-		Matrix<double> C_can_T;
-		transpose(C_can,C_can_T);
-		for(unsigned i=0;i!=narg;++i)
-		{
-			for(unsigned j=0;j!=narg;++j)
-				C_can[i][j]=(C_can[i][j]+C_can_T[i][j])/2;
-		}
-		
-		if(is_output_can)
-		{
+			//~ Matrix<double> C_sym = 0.5*(Clag+Clag.trans());
+			Matrix<double> Clag_T;
+			transpose(Clag,Clag_T);
+			Matrix<double> C_sym(narg,narg);
 			for(unsigned i=0;i!=narg;++i)
 			{
-				ocorr2.printField("NORMALIZATION",xnorm);
-				ocorr2.printField("MATRIX",row_args[i]);
 				for(unsigned j=0;j!=narg;++j)
-					ocorr2.printField(col_args[j],C_can[i][j]);
-				ocorr2.printField();
+					C_sym[i][j]=(Clag[i][j]+Clag_T[i][j])/2;
 			}
-			ocorr2.flush();
-		}
-		
-		if(is_debug)
-		{
-			odebug.printField("LAG_TIME",tau);
+			
+			//~ Matrix<double> C_can = X_adj*(C_sym*X);
+			Matrix<double> CsymX;
+			mult(C_sym,X,CsymX);
+			Matrix<double> C_can;
+			mult(X_adj,CsymX,C_can);
+			
+			//~ C_can = 0.5*(C_can+C_can.trans());
+			Matrix<double> C_can_T;
+			transpose(C_can,C_can_T);
 			for(unsigned i=0;i!=narg;++i)
 			{
-				odebug.printField("ROW",int(i));
 				for(unsigned j=0;j!=narg;++j)
-					odebug.printField(col_args[j],C_can[i][j]);
-				odebug.printField();
+					C_can[i][j]=(C_can[i][j]+C_can_T[i][j])/2;
 			}
-			odebug.flush();
-		}
-		
-		std::vector<double> nwt;
-		Matrix<double> nvt;
-		diagMat(C_can,nwt,nvt);
-		
-		std::vector<double> eigval2;
-		std::vector<std::vector<double> > eigvec2;
-		if(ip==0)
-		{
-			for(unsigned i=0;i!=nwt.size();++i)
-			{
-				std::vector<double> rowvec;
-				for(unsigned j=0;j!=narg;++j)
-					rowvec.push_back(nvt[i][j]);
-				eigval2.push_back(nwt[i]);
-				eigvec2.push_back(rowvec);
-			}
-		}
-		else
-		{
-			std::multimap<double,std::vector<double> > eigs2;
-			for(unsigned i=0;i!=nwt.size();++i)
-			{
-				//~ eigs2[nwt[i]]=nvt.get_row(i);
-				std::vector<double> rowvec;
-				for(unsigned j=0;j!=narg;++j)
-					rowvec.push_back(nvt[i][j]);
-				//~ eigs2[nwt[i]]=rowvec;
-				eigs2.insert(std::pair<double,std::vector<double> >(nwt[i],rowvec));
-			}
-			for(std::multimap<double,std::vector<double> >::reverse_iterator miter=eigs2.rbegin();miter!=eigs2.rend();++miter)
-			{
-				eigval2.push_back(miter->first);
-				eigvec2.push_back(miter->second);
-			}
-		}
-		
-		log.printf("  Eigenvalues:");
-		for(unsigned i=0;i!=narg;++i)
-			log.printf(" %f",eigval2[i]);
-		log.printf("\n\n");
-
-		oeigval.fmtField(" %f");
-		oeigval.printField("LAG_TIME",tau);
-		for(unsigned i=0;i!=narg;++i)
-		{
-			std::string id;
-			Tools::convert(i,id);
-			std::string eigid="EIGVAL"+id;
-			oeigval.printField(eigid,eigval2[i]);
-		}
-		oeigval.printField();
-		oeigval.flush();
-		
-		Matrix<double> eigvecs(narg,narg);
-		for(unsigned i=0;i!=narg;++i)
-		{
-			for(unsigned j=0;j!=narg;++j)
-				eigvecs[i][j]=eigvec2[i][j];
-		}
-		std::vector<double> meigvec=eigvec2.front();
-		
-		//~ Matrix<double> mvt=X*eigvecs.trans();
-		Matrix<double> eigvecs_T;
-		transpose(eigvecs,eigvecs_T);
-		Matrix<double> mvt;
-		mult(X,eigvecs_T,mvt);
-		
-		std::vector<std::vector<double> > tica_res;
-		for(unsigned k=0;k!=ncomp;++k)
-		{
-			//~ std::vector<double> evec=mvt.get_column(k);
-			std::vector<double> evec;
 			
-			double mnorm=0;
-			for(unsigned j=0;j!=narg;++j)
+			if(is_output_can)
 			{
-				double val=mvt[j][k];
-				evec.push_back(val);
-				mnorm+=val*val;
-			}
-			mnorm=sqrt(mnorm);
-			
-			double vmax=0;
-			unsigned cpid=0;
-			for(unsigned j=0;j!=narg;++j)
-			{
-				if(fabs(mvt[j][k])>vmax)
+				for(unsigned i=0;i!=narg;++i)
 				{
-					vmax=fabs(mvt[j][k]);
-					cpid=j;
+					ocorr2.printField("NORMALIZATION",xnorm);
+					ocorr2.printField("MATRIX",row_args[i]);
+					for(unsigned j=0;j!=narg;++j)
+						ocorr2.printField(col_args[j],C_can[i][j]);
+					ocorr2.printField();
+				}
+				ocorr2.flush();
+			}
+			
+			if(is_debug)
+			{
+				odebug.printField("LAG_TIME",tau);
+				for(unsigned i=0;i!=narg;++i)
+				{
+					odebug.printField("ROW",int(i));
+					for(unsigned j=0;j!=narg;++j)
+						odebug.printField(col_args[j],C_can[i][j]);
+					odebug.printField();
+				}
+				odebug.flush();
+			}
+			
+			std::vector<double> nwt;
+			Matrix<double> nvt;
+			diagMat(C_can,nwt,nvt);
+			
+			std::vector<double> eigval2;
+			std::vector<std::vector<double> > eigvec2;
+			if(ip==0)
+			{
+				for(unsigned i=0;i!=nwt.size();++i)
+				{
+					std::vector<double> rowvec;
+					for(unsigned j=0;j!=narg;++j)
+						rowvec.push_back(nvt[i][j]);
+					eigval2.push_back(nwt[i]);
+					eigvec2.push_back(rowvec);
+				}
+			}
+			else
+			{
+				std::multimap<double,std::vector<double> > eigs2;
+				for(unsigned i=0;i!=nwt.size();++i)
+				{
+					//~ eigs2[nwt[i]]=nvt.get_row(i);
+					std::vector<double> rowvec;
+					for(unsigned j=0;j!=narg;++j)
+						rowvec.push_back(nvt[i][j]);
+					//~ eigs2[nwt[i]]=rowvec;
+					eigs2.insert(std::pair<double,std::vector<double> >(nwt[i],rowvec));
+				}
+				for(std::multimap<double,std::vector<double> >::reverse_iterator miter=eigs2.rbegin();miter!=eigs2.rend();++miter)
+				{
+					eigval2.push_back(miter->first);
+					eigvec2.push_back(miter->second);
 				}
 			}
 			
-			if(ip>0)
-			{
-				if(evec[cpid]*pre_evec[k][cpid]<0)
-					mnorm*=-1;
-				if(evec[cpid]<0)
-					resign[k]=true;
-				else
-					resign[k]=false;
-			}
-
+			log.printf("  Eigenvalues:");
 			for(unsigned i=0;i!=narg;++i)
-				evec[i]/=mnorm;
+				log.printf(" %f",eigval2[i]);
+			log.printf("\n\n");
 
-			tica_res.push_back(evec);
+			oeigval.fmtField(" %f");
+			oeigval.printField("LAG_TIME",tau);
+			for(unsigned i=0;i!=narg;++i)
+			{
+				std::string id;
+				Tools::convert(i,id);
+				std::string eigid="EIGVAL"+id;
+				oeigval.printField(eigid,eigval2[i]);
+			}
+			oeigval.printField();
+			oeigval.flush();
 			
-			pre_evec[k]=evec;
-		}
-		eigvec_points.push_back(tica_res);
+			Matrix<double> eigvecs(narg,narg);
+			for(unsigned i=0;i!=narg;++i)
+			{
+				for(unsigned j=0;j!=narg;++j)
+					eigvecs[i][j]=eigvec2[i][j];
+			}
+			std::vector<double> meigvec=eigvec2.front();
+			
+			//~ Matrix<double> mvt=X*eigvecs.trans();
+			Matrix<double> eigvecs_T;
+			transpose(eigvecs,eigvecs_T);
+			Matrix<double> mvt;
+			mult(X,eigvecs_T,mvt);
+			
+			std::vector<std::vector<double> > tica_res;
+			for(unsigned k=0;k!=ncomp;++k)
+			{
+				//~ std::vector<double> evec=mvt.get_column(k);
+				std::vector<double> evec;
+				
+				double mnorm=0;
+				for(unsigned j=0;j!=narg;++j)
+				{
+					double val=mvt[j][k];
+					evec.push_back(val);
+					mnorm+=val*val;
+				}
+				mnorm=sqrt(mnorm);
+				
+				double vmax=0;
+				unsigned cpid=0;
+				for(unsigned j=0;j!=narg;++j)
+				{
+					if(fabs(mvt[j][k])>vmax)
+					{
+						vmax=fabs(mvt[j][k]);
+						cpid=j;
+					}
+				}
+				
+				if(ip>0)
+				{
+					if(evec[cpid]*pre_evec[k][cpid]<0)
+						mnorm*=-1;
+					if(evec[cpid]<0)
+						resign[k]=true;
+					else
+						resign[k]=false;
+				}
 
-		for(unsigned i=0;i!=eff_size;++i)
-			if(nwt[i]<0) nwt[i]=0;
+				for(unsigned i=0;i!=narg;++i)
+					evec[i]/=mnorm;
+
+				tica_res.push_back(evec);
+				
+				pre_evec[k]=evec;
+			}
+			eigvec_points.push_back(tica_res);
+
+			for(unsigned i=0;i!=eff_size;++i)
+				if(nwt[i]<0) nwt[i]=0;
+		}
 	}
 	
 	for(unsigned i=0;i!=ncomp;++i)
@@ -897,7 +935,7 @@ void TICA::performAnalysis()
 		oeigvec.addConstantField("COMPONENT");
 		oeigvec.printField("COMPONENT",int(i));
 		oeigvec.fmtField(" %e");
-		for(unsigned j=0;j!=npoints;++j)
+		for(unsigned j=0;j!=eigvec_points.size();++j)
 		{
 			double tau=j*delta_tau;
 			oeigvec.printField("LAG_TIME",tau);
