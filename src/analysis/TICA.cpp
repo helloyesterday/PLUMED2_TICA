@@ -97,7 +97,7 @@ private:
 	bool is_output_can;
 	bool use_int_calc;
 	bool use_fix_aver;
-	bool use_ind_avg;
+	bool is_update_avg;
 
 	// The piece of data we are inserting
 	unsigned idata;
@@ -206,11 +206,11 @@ void TICA::registerKeywords( Keywords& keys ){
 	keys.add("compulsory","EIGENVALUE_FILE","tica_eigenvalue.data","the file to output the eigen value");
 	keys.add("compulsory","CORRELATION_FILE","tica_correlation.data","the file to output the correlation matrix");
 	keys.addFlag("UNIFORM_WEIGHTS",false,"make all the weights equal to one");
-	keys.addFlag("INDEPENDENT_AVERAGE",false,"do not update the average value when reading another correlation file. Should NOT be used together with AVERAGE_FILE");
+	keys.addFlag("UPDATE_AVERAGE",false,"update the average value when reading another correlation file");
 	keys.add("optional","CORR_CAN_FILE","the file to output the correlation canonical matrix");
 	keys.add("optional","EIGEN_NUMBERS","how many eigenvectors to be output (from large to small)");
 	keys.add("optional","READ_CORR_FILE","read the correlations from file");
-	keys.add("optional","AVERAGE_FILE","read the average values from file.  Should NOT be used together with INDEPENDENT_AVERAGE");
+	keys.add("optional","AVERAGE_FILE","read the average values from file");
 	keys.add("optional","CORR_INFO_FILE","the file that output the information of CVs correlation");
 	keys.add("optional","RESCALE_FILE","the file that output rescaled trajectory");
 	keys.add("optional","DEBUG_FILE","the file that debug information");
@@ -286,7 +286,7 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 	parse("EIGENVALUE_FILE",eigval_file);
 
 	parseFlag("UNIFORM_WEIGHTS",ignore_reweight);
-	parseFlag("INDEPENDENT_AVERAGE",use_ind_avg);
+	parseFlag("UPDATE_AVERAGE",is_update_avg);
 
 	if(ignore_reweight&&is_int_time)
 		use_int_calc=true;
@@ -323,8 +323,8 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 	parse("AVERAGE_FILE",aver_file);
 	if(aver_file.size()>0)
 	{
-		if(use_ind_avg)
-			error("AVERAGE_FILE and INDEPENDENT_AVERAGE should NOT be used together!");
+		if(is_update_avg)
+			error("AVERAGE_FILE and UPDATE_AVERAGE should NOT be used together!");
 		IFile iaver;
 		iaver.link(*this);
 		iaver.open(aver_file.c_str());
@@ -465,8 +465,8 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 		log.printf("  with rescaled output file: %s\n",rescale_file.c_str());
 	if(is_debug)
 		log.printf("  with debug file: %s\n",debug_file.c_str());
-	if(use_ind_avg)
-		log.printf("  with indepedent average values reading from the trajectory to calculate the correlation matrix\n");
+	if(is_update_avg)
+		log.printf("  with updating the average values reading from the trajectory to calculate the correlation matrix\n");
 	if(use_fix_aver)
 	{
 		log.printf("  use average values from file: %s\n",aver_file.c_str());
@@ -487,6 +487,8 @@ data(getNumberOfArguments()),avgdata(getNumberOfArguments())
 		for(unsigned i=0;i!=atau.size();++i)
 			log.printf("    %d\t%f\t%f\n",int(i),atau[i],point_weights[i]);
 	}
+	log<<"  Bibliography "<<plumed.cite("Yang and Parrinello, J. Chem. Theory Comput. 14, 2889 (2018)");
+	log<<"\n";
 }
 
 TICA::~TICA()
@@ -519,12 +521,12 @@ void TICA::performAnalysis()
 	}
 	else
 	{
-		if(is_read_avg&&!use_ind_avg)
+		if(is_read_avg&&is_update_avg)
 			tot_norm+=read_weight;
 
 		for(unsigned i=0;i!=narg;++i)
 		{
-			if(is_read_avg&&!use_ind_avg)
+			if(is_read_avg&&is_update_avg)
 			{
 				old_aver[i]/=wnorm;
 				myaverages[i]+=read_weight*read_aver[i];
