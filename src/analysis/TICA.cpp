@@ -33,21 +33,25 @@
 /* 
 Time-lagged independent component analysis (TICA) using a large number of collective variables as input.
 
+TICA is a tools to look for the slowest decaying modes of the linear combination of input basis-set within a given lag time.
+The theory of TICA can be found at paper:
+Yang, Y. I. and Parrinello, M. J. Chem. Theory Comput. 14, 2889 (2018) https://doi.org/10.1021/acs.jctc.8b00231
 
 \par Examples
 
-A simple example is as below, it will use the TICA method to analyze the CVs cv1 and cv2 from metadynamics simulaiton (COLVAR file colvar.0.data)
-It will analyze the data using 20 different lag times (from 0 to 100*20=2000).
+All the collective variables in PLUMED2 can be used as the basis-set. A simple example is as below,
+the cv1 and cv2 are setup as the basis-set of TICA, the program with analysis
+the data from metadynamics simulaiton. It will analyze with the 100 different lag times from 0 to 500.
 
 \verbatim
 cv1: READ FILE=colvar.0.data VALUES=cv1 IGNORE_TIME
 cv2: READ FILE=colvar.0.data VALUES=cv1 IGNORE_TIME
 rbias: READ FILE=colvar.0.data VALUES=metad.rbias IGNORE_TIME
-rw: REWEIGHT_METAD TEMP=330
+rw: REWEIGHT_METAD TEMP=300
 
 TICA ...
  ARG=cv1,cv2
- LAG_TIME=400
+ LAG_TIME=500
  TAU_NUMBER=100
  STEP_SIZE=0.2
  LOGWEIGHTS=rw
@@ -198,6 +202,7 @@ void TICA::registerKeywords( Keywords& keys ){
 	vesselbase::ActionWithAveraging::registerKeywords( keys );
 	keys.remove("SERIAL"); keys.remove("LOWMEM"); 
 	keys.remove("ARG");
+	keys.remove("NORMALIZATION");
 	keys.add("compulsory","ARG","the CVs for the input to calculate TICA"); 
   	keys.add("compulsory","LAG_TIME","the total lag time to calculate TICA");
 	keys.add("compulsory","TAU_NUMBER","100","how much points of lag time to output");
